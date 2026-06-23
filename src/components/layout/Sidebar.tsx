@@ -73,35 +73,92 @@ const adminMenuSections: MenuSection[] = [
   },
 ];
 
-const playerMenuByRole: Record<string, MenuItem[]> = {
+const menuSectionsByRole: Record<string, MenuSection[]> = {
   SECRETARIA: [
-    { label: 'Jugadores', path: '/jugadores' },
-    { label: 'Validación de jugadores', path: '/validacion-jugadores' },
-    { label: 'Inscripciones', path: '/inscripciones' },
-    { label: 'Inscribir jugador', path: '/inscripciones/nueva' },
-    { label: 'Solicitudes de pases', path: '/pases' },
-    { label: 'Calendario', path: '/calendario' },
-    { label: 'Eventos individuales', path: '/eventos-individuales' },
-    { label: 'Estadísticas', path: '/estadisticas' },
-    { label: 'Reportes', path: '/reportes' },
+    {
+      items: [{ label: 'Dashboard', path: '/dashboard' }],
+    },
+    {
+      title: 'JUGADORES',
+      items: [
+        { label: 'Jugadores', path: '/jugadores' },
+        { label: 'Validación de jugadores', path: '/validacion-jugadores' },
+      ],
+    },
+    {
+      title: 'INSCRIPCIONES',
+      items: [
+        { label: 'Inscribir jugador', path: '/inscripciones/nueva' },
+        { label: 'Inscripciones', path: '/inscripciones' },
+      ],
+    },
+    {
+      title: 'PASES',
+      items: [{ label: 'Solicitudes de pases', path: '/pases' }],
+    },
+    {
+      title: 'COMPETENCIA',
+      items: [
+        { label: 'Calendario', path: '/calendario' },
+        { label: 'Eventos individuales', path: '/eventos-individuales' },
+      ],
+    },
+    {
+      title: 'RESULTADOS',
+      items: [
+        { label: 'Estadísticas', path: '/estadisticas' },
+        { label: 'Reportes', path: '/reportes' },
+      ],
+    },
   ],
   DELEGADO: [
-    { label: 'Mis jugadores', path: '/jugadores' },
-    { label: 'Mis inscripciones', path: '/inscripciones' },
-    { label: 'Inscribir jugador', path: '/inscripciones/nueva' },
-    { label: 'Mis solicitudes de pase', path: '/pases' },
-    { label: 'Solicitar pase', path: '/pases/nueva' },
-    { label: 'Mis partidos', path: '/partidos' },
-    { label: 'Mis eventos individuales', path: '/eventos-individuales' },
-    { label: 'Estadísticas', path: '/estadisticas' },
-    { label: 'Reportes', path: '/reportes' },
+    {
+      items: [{ label: 'Dashboard', path: '/dashboard' }],
+    },
+    {
+      title: 'JUGADORES',
+      items: [{ label: 'Mis jugadores', path: '/jugadores' }],
+    },
+    {
+      title: 'INSCRIPCIONES',
+      items: [
+        { label: 'Inscribir jugador', path: '/inscripciones/nueva' },
+        { label: 'Mis inscripciones', path: '/inscripciones' },
+      ],
+    },
+    {
+      title: 'PASES',
+      items: [
+        { label: 'Solicitar pase', path: '/pases/nueva' },
+        { label: 'Mis solicitudes de pase', path: '/pases' },
+      ],
+    },
+    {
+      title: 'COMPETENCIA',
+      items: [
+        { label: 'Mis partidos', path: '/partidos' },
+        { label: 'Mis eventos individuales', path: '/eventos-individuales' },
+      ],
+    },
+    {
+      title: 'RESULTADOS',
+      items: [
+        { label: 'Estadísticas', path: '/estadisticas' },
+        { label: 'Reportes', path: '/reportes' },
+      ],
+    },
   ],
   PLANILLERO: [
-    { label: 'Partidos', path: '/partidos' },
-    { label: 'Planillas', path: '/planillas' },
-    { label: 'Eventos individuales', path: '/eventos-individuales' },
-    { label: 'Estadísticas', path: '/estadisticas' },
-    { label: 'Reportes', path: '/reportes' },
+    {
+      items: [
+        { label: 'Dashboard', path: '/dashboard' },
+        { label: 'Partidos', path: '/partidos' },
+        { label: 'Planillas', path: '/planillas' },
+        { label: 'Eventos individuales', path: '/eventos-individuales' },
+        { label: 'Estadísticas', path: '/estadisticas' },
+        { label: 'Reportes', path: '/reportes' },
+      ],
+    },
   ],
 };
 
@@ -117,12 +174,9 @@ export function Sidebar() {
   const menuSections =
     role === 'ADMINISTRADOR'
       ? adminMenuSections
-      : [
+      : menuSectionsByRole[role] ?? [
           {
-            items: [
-              { label: 'Dashboard', path: '/dashboard' },
-              ...(playerMenuByRole[role] ?? []),
-            ],
+            items: [{ label: 'Dashboard', path: '/dashboard' }],
           },
         ];
 

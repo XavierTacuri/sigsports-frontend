@@ -188,12 +188,7 @@ export function InscripcionDetailPage() {
       return;
     }
 
-    if (!editForm.numero_camiseta) {
-      setError('El número de camiseta es obligatorio.');
-      return;
-    }
-
-    if (Number(editForm.numero_camiseta) <= 0) {
+    if (editForm.numero_camiseta && Number(editForm.numero_camiseta) <= 0) {
       setError('El número de camiseta debe ser mayor a 0.');
       return;
     }
@@ -202,10 +197,13 @@ export function InscripcionDetailPage() {
       setError('');
       setSuccess('');
       setIsSubmitting(true);
+      const numeroCamisetaValue = editForm.numero_camiseta
+        ? Number(editForm.numero_camiseta)
+        : null;
       const updated = (await inscripcionesApi.updateInscripcion(
         inscripcion.id_inscripcion_competencia,
         {
-          numero_camiseta: Number(editForm.numero_camiseta),
+          numero_camiseta: numeroCamisetaValue,
           observaciones: editForm.observaciones.trim() || null,
         },
       )) as InscripcionDetalle;
@@ -318,10 +316,9 @@ export function InscripcionDetailPage() {
           </h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <FormInput
-              label="Número de camiseta *"
+              label="Número de camiseta"
               type="number"
               min="1"
-              required
               value={editForm.numero_camiseta}
               onChange={(event) =>
                 setEditForm((current) => ({

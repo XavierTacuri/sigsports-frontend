@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AdminCrudPage,
   type FormValues,
@@ -16,6 +16,14 @@ import type {
   UsuarioClubUpdatePayload,
 } from '../../types';
 import { requiredNumber } from '../../utils/formValues';
+
+type UsuarioClubWithStatus = UsuarioClub & {
+  usuario?: Partial<Usuario> | null;
+  usuario_activo?: boolean | null;
+  activo_usuario?: boolean | null;
+  estado?: string | null;
+  estado_relacion?: string | null;
+};
 
 const initialValues = (association?: UsuarioClub): FormValues => ({
   id_usuario: association?.id_usuario?.toString() ?? '',
@@ -51,6 +59,26 @@ export function UsuariosClubesPage() {
     () => new Map(clubes.map((item) => [item.id_club, item.nombre_club])),
     [clubes],
   );
+  const usuariosById = useMemo(
+    () => new Map(usuarios.map((item) => [item.id_usuario, item])),
+    [usuarios],
+  );
+
+  const isDelegadoActivo = useCallback((item: UsuarioClub) => {
+    const details = item as UsuarioClubWithStatus;
+    const relacionActiva = details.activo ?? (
+      details.estado?.toUpperCase() === 'ACTIVO' ||
+      details.estado_relacion?.toUpperCase() === 'ACTIVO'
+    );
+    const usuarioActivo =
+      details.usuario?.activo ??
+      details.usuario_activo ??
+      details.activo_usuario ??
+      usuariosById.get(item.id_usuario)?.activo ??
+      true;
+
+    return Boolean(relacionActiva) && Boolean(usuarioActivo);
+  }, [usuariosById]);
 
   useEffect(() => {
     if (user?.rol?.nombre_rol !== 'ADMINISTRADOR') {
@@ -118,23 +146,27 @@ export function UsuariosClubesPage() {
         key: 'correo',
         header: 'Correo',
         render: (item: UsuarioClub) =>
-          usuarios.find((usuario) => usuario.id_usuario === item.id_usuario)
-            ?.correo_electronico ?? '-',
+          (item as UsuarioClubWithStatus).usuario?.correo_electronico ??
+          usuariosById.get(item.id_usuario)?.correo_electronico ??
+          '-',
       },
       {
         key: 'telefono',
         header: 'Teléfono',
         render: (item: UsuarioClub) =>
-          usuarios.find((usuario) => usuario.id_usuario === item.id_usuario)
-            ?.telefono ?? '-',
+          (item as UsuarioClubWithStatus).usuario?.telefono ??
+          usuariosById.get(item.id_usuario)?.telefono ??
+          '-',
       },
       {
         key: 'estado',
         header: 'Estado',
-        render: (item: UsuarioClub) => <StatusBadge active={item.activo} />,
+        render: (item: UsuarioClub) => (
+          <StatusBadge active={isDelegadoActivo(item)} />
+        ),
       },
     ];
-  }, [clubNames, usuarioNames, usuarios]);
+  }, [clubNames, isDelegadoActivo, usuarioNames, usuariosById]);
 
   return (
     <AdminCrudPage
@@ -165,7 +197,7 @@ export function UsuariosClubesPage() {
       toCreatePayload={toCreatePayload}
       toUpdatePayload={toUpdatePayload}
       statusToggle={{
-        isActive: (item) => item.activo,
+        isActive: (item) => isDelegadoActivo(item),
         buildPayload: (activo) => ({ activo }),
       }}
       headerContent={
@@ -174,9 +206,9 @@ export function UsuariosClubesPage() {
         ) : null
       }
       summaryCards={[
-        { title: 'Clubes con delegado', value: (items) => new Set(items.filter((item) => item.activo).map((item) => item.id_club)).size, tone: 'green', icon: 'C' },
-        { title: 'Clubes sin delegado', value: (items) => clubes.filter((club) => !items.some((item) => item.activo && item.id_club === club.id_club)).length, tone: 'amber', icon: 'S' },
-        { title: 'Delegados activos', value: (items) => new Set(items.filter((item) => item.activo).map((item) => item.id_usuario)).size, tone: 'blue', icon: 'D' },
+        { title: 'Clubes con delegado', value: (items) => new Set(items.filter((item) => isDelegadoActivo(item)).map((item) => item.id_club)).size, tone: 'green', icon: 'C' },
+        { title: 'Clubes sin delegado', value: (items) => clubes.filter((club) => !items.some((item) => isDelegadoActivo(item) && item.id_club === club.id_club)).length, tone: 'amber', icon: 'S' },
+        { title: 'Delegados activos', value: (items) => new Set(items.filter((item) => isDelegadoActivo(item)).map((item) => item.id_usuario)).size, tone: 'blue', icon: 'D' },
       ]}
       searchPlaceholder="Club o delegado"
       getSearchText={(item) => {
@@ -197,7 +229,7 @@ export function UsuariosClubesPage() {
             { value: 'INACTIVO', label: 'Inactivo' },
           ],
           predicate: (item, value) =>
-            value === 'ACTIVO' ? item.activo : !item.activo,
+            value === 'ACTIVO' ? isDelegadoActivo(item) : !isDelegadoActivo(item),
         },
       ]}
       emptyMessage="No hay usuarios asociados a clubes."

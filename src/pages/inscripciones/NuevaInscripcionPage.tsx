@@ -31,25 +31,19 @@ import { getAssetUrl } from '../../utils/assetUrl';
 import { getRoleName } from '../../utils/authRole';
 import { Pagination } from '../../components/ui/Pagination';
 
-const currentYear = new Date().getFullYear();
-
 type CompetenciaDetallada = Competencia & {
   campeonato?: Partial<Campeonato> | null;
+  nombre_deporte?: string | null;
   nombre_categoria?: string | null;
   edad_minima?: number | string | null;
   edad_maxima?: number | string | null;
   anio?: number | string | null;
 };
 
-const initialForm = {
-  id_competencia: '',
-  numero_camiseta: '',
-  anio_participacion: String(currentYear),
-  observaciones: '',
-};
-
 const isActivo = (estado?: string | null) =>
   estado?.trim().toUpperCase() === 'ACTIVO';
+
+const estadosInscripcionBloqueantes = new Set(['ACTIVA', 'SUSPENDIDA']);
 
 const normalizeText = (value?: string | null) =>
   (value ?? '')
@@ -158,7 +152,10 @@ const getNombreJugador = (jugador: Jugador) =>
   jugador.nombre_completo ||
   `${jugador.nombres ?? ''} ${jugador.apellidos ?? ''}`.trim();
 
-const getInscripcionError = (error: unknown) => {
+const getInscripcionError = (
+  error: unknown,
+  hasBlockingDuplicate = true,
+) => {
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
     const detail = error.response?.data?.detail;
@@ -168,6 +165,10 @@ const getInscripcionError = (error: unknown) => {
       status === 409 ||
       ((status === 400 || status === 422) && detailText.includes('inscrit'))
     ) {
+      if (!hasBlockingDuplicate) {
+        return 'No se pudo guardar la inscripción. No hay una inscripción vigente local que bloquee esta competencia.';
+      }
+
       return 'El jugador ya está inscrito en esta competencia.';
     }
   }
@@ -199,7 +200,9 @@ export function NuevaInscripcionPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selectedJugador, setSelectedJugador] = useState<Jugador | null>(null);
-  const [form, setForm] = useState(initialForm);
+  const [selectedCompetencias, setSelectedCompetencias] = useState<number[]>([]);
+  const [numeroCamiseta, setNumeroCamiseta] = useState('');
+  const [observacionesInscripcion, setObservacionesInscripcion] = useState('');
   const {
     clubesAsociados,
     selectedClubName,
@@ -327,7 +330,18 @@ export function NuevaInscripcionPage() {
   const getCompetenciasDisponibles = (jugador: Jugador) => {
     const inscripcionesJugador = new Set(
       inscripciones
-        .filter((inscripcion) => Number(inscripcion.id_jugador) === Number(jugador.id_jugador))
+        .filter(
+          (inscripcion) => {
+            const estado = String(
+              inscripcion.estado_inscripcion ?? '',
+            ).toUpperCase();
+
+            return (
+              Number(inscripcion.id_jugador) === Number(jugador.id_jugador) &&
+              estadosInscripcionBloqueantes.has(estado)
+            );
+          },
+        )
         .map((inscripcion) => Number(inscripcion.id_competencia)),
     );
 
@@ -364,21 +378,11 @@ export function NuevaInscripcionPage() {
     currentPage * pageSize,
   );
 
-  const selectedCompetencias = useMemo(
+  const competenciasDisponiblesSeleccionadas = useMemo(
     () => (selectedJugador ? getCompetenciasDisponibles(selectedJugador) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [competenciasActivas, inscripciones, selectedJugador],
   );
-  const selectedCompetencia = selectedCompetencias.find(
-    (competencia) => competencia.id_competencia === Number(form.id_competencia),
-  );
-
-  useEffect(() => {
-    setForm((current) => ({
-      ...current,
-      anio_participacion: String(getAnioParticipacion(selectedCompetencia)),
-    }));
-  }, [selectedCompetencia]);
 
   const stats = {
     activos: jugadores.length,
@@ -392,21 +396,18 @@ export function NuevaInscripcionPage() {
   ].map((value) => ({ value: value ?? '', label: value ?? '' }));
 
   const openInscripcionModal = (jugador: Jugador) => {
-    const disponibles = getCompetenciasDisponibles(jugador);
     setSelectedJugador(jugador);
-    setForm({
-      ...initialForm,
-      id_competencia: disponibles[0]?.id_competencia
-        ? String(disponibles[0].id_competencia)
-        : '',
-      anio_participacion: String(getAnioParticipacion(disponibles[0])),
-    });
+    setSelectedCompetencias([]);
+    setNumeroCamiseta('');
+    setObservacionesInscripcion('');
     setError('');
   };
 
   const closeModal = () => {
     setSelectedJugador(null);
-    setForm(initialForm);
+    setSelectedCompetencias([]);
+    setNumeroCamiseta('');
+    setObservacionesInscripcion('');
   };
 
   const handleSubmit = async () => {
@@ -415,37 +416,64 @@ export function NuevaInscripcionPage() {
       return;
     }
 
-    if (!form.id_competencia) {
-      setError('Selecciona una competencia.');
+    if (selectedCompetencias.length === 0) {
+      setError('Selecciona al menos una competencia.');
       return;
     }
 
-    if (!form.numero_camiseta || Number(form.numero_camiseta) <= 0) {
+    if (numeroCamiseta && Number(numeroCamiseta) <= 0) {
       setError('El número de camiseta debe ser mayor a 0.');
       return;
     }
+
+    const numeroCamisetaValue = numeroCamiseta ? Number(numeroCamiseta) : null;
 
     setIsSubmitting(true);
     setError('');
 
     try {
-      await inscripcionesApi.createInscripcion({
-        id_competencia: Number(form.id_competencia),
-        id_club: Number(selectedClubId),
-        id_jugador: Number(selectedJugador.id_jugador),
-        numero_camiseta: Number(form.numero_camiseta),
-        anio_participacion: Number(form.anio_participacion),
-        observaciones: form.observaciones.trim() || null,
-      });
+      await Promise.all(
+        selectedCompetencias.map((idCompetencia) => {
+          const competencia = competenciasDisponiblesSeleccionadas.find(
+            (current) => current.id_competencia === idCompetencia,
+          );
+
+          return inscripcionesApi.createInscripcion({
+            id_competencia: idCompetencia,
+            id_club: Number(selectedClubId),
+            id_jugador: Number(selectedJugador.id_jugador),
+            numero_camiseta: numeroCamisetaValue,
+            anio_participacion: Number(getAnioParticipacion(competencia)),
+            observaciones: observacionesInscripcion.trim() || null,
+          });
+        }),
+      );
 
       const inscripcionesData = await inscripcionesApi.getInscripcionesByClub(
         Number(selectedClubId),
       );
       setInscripciones(inscripcionesData);
-      setSuccessMessage('Jugador inscrito correctamente.');
+      setSuccessMessage(
+        selectedCompetencias.length === 1
+          ? 'Jugador inscrito correctamente.'
+          : 'Jugador inscrito correctamente en las competencias seleccionadas.',
+      );
       closeModal();
     } catch (requestError) {
-      setError(getInscripcionError(requestError));
+      const selectedCompetenciasSet = new Set(selectedCompetencias);
+      const hasBlockingDuplicate = inscripciones.some((inscripcion) => {
+        const estado = String(
+          inscripcion.estado_inscripcion ?? '',
+        ).toUpperCase();
+
+        return (
+          Number(inscripcion.id_jugador) === Number(selectedJugador.id_jugador) &&
+          selectedCompetenciasSet.has(Number(inscripcion.id_competencia)) &&
+          estadosInscripcionBloqueantes.has(estado)
+        );
+      });
+
+      setError(getInscripcionError(requestError, hasBlockingDuplicate));
     } finally {
       setIsSubmitting(false);
     }
@@ -638,10 +666,14 @@ export function NuevaInscripcionPage() {
               (isDelegado ? selectedClubName : '') ||
               'Club seleccionado'
             }
-            competenciasDisponibles={selectedCompetencias}
-            form={form}
+            competenciasDisponibles={competenciasDisponiblesSeleccionadas}
+            selectedCompetencias={selectedCompetencias}
+            numeroCamiseta={numeroCamiseta}
+            observaciones={observacionesInscripcion}
             isSubmitting={isSubmitting}
-            onChange={setForm}
+            onChange={setSelectedCompetencias}
+            onNumeroCamisetaChange={setNumeroCamiseta}
+            onObservacionesChange={setObservacionesInscripcion}
             onCancel={closeModal}
             onSubmit={() => void handleSubmit()}
           />
@@ -655,9 +687,13 @@ interface InscripcionModalContentProps {
   jugador: Jugador;
   clubName: string;
   competenciasDisponibles: CompetenciaDetallada[];
-  form: typeof initialForm;
+  selectedCompetencias: number[];
+  numeroCamiseta: string;
+  observaciones: string;
   isSubmitting: boolean;
-  onChange: (form: typeof initialForm) => void;
+  onChange: (selected: number[]) => void;
+  onNumeroCamisetaChange: (value: string) => void;
+  onObservacionesChange: (value: string) => void;
   onCancel: () => void;
   onSubmit: () => void;
 }
@@ -666,18 +702,28 @@ function InscripcionModalContent({
   jugador,
   clubName,
   competenciasDisponibles,
-  form,
+  selectedCompetencias,
+  numeroCamiseta,
+  observaciones,
   isSubmitting,
   onChange,
+  onNumeroCamisetaChange,
+  onObservacionesChange,
   onCancel,
   onSubmit,
 }: InscripcionModalContentProps) {
   const nombre = getNombreJugador(jugador);
-  const canSubmit =
-    Boolean(form.id_competencia) &&
-    Boolean(form.numero_camiseta) &&
-    Number(form.numero_camiseta) > 0 &&
-    !isSubmitting;
+  const canSubmit = selectedCompetencias.length > 0 && !isSubmitting;
+
+  const toggleCompetencia = (competencia: CompetenciaDetallada) => {
+    const idCompetencia = Number(competencia.id_competencia);
+
+    onChange(
+      selectedCompetencias.includes(idCompetencia)
+        ? selectedCompetencias.filter((item) => item !== idCompetencia)
+        : [...selectedCompetencias, idCompetencia],
+    );
+  };
 
   return (
     <div className="space-y-5">
@@ -711,53 +757,65 @@ function InscripcionModalContent({
           inscripciones existentes.
         </p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FilterSelect
-            label="Competencia o disciplina"
-            value={form.id_competencia}
-            options={competenciasDisponibles.map((competencia) => ({
-              value: String(competencia.id_competencia),
-              label: competencia.nombre_competencia,
-            }))}
-            onChange={(event) => {
-              const competencia = competenciasDisponibles.find(
-                (item) => item.id_competencia === Number(event.target.value),
-              );
-              onChange({
-                ...form,
-                id_competencia: event.target.value,
-                anio_participacion: String(getAnioParticipacion(competencia)),
-              });
-            }}
-          />
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-slate-900">
+            Competencias disponibles
+          </h3>
+          {competenciasDisponibles.map((competencia) => {
+            const idCompetencia = Number(competencia.id_competencia);
+            const checked = selectedCompetencias.includes(idCompetencia);
+
+            return (
+              <div
+                key={idCompetencia}
+                className="rounded-lg border border-slate-200 p-4"
+              >
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleCompetencia(competencia)}
+                    className="mt-1 h-4 w-4 rounded border-slate-300"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold text-slate-950">
+                      {competencia.nombre_competencia}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Deporte: {competencia.nombre_deporte ?? '-'} · Categoria:{' '}
+                      {competencia.nombre_categoria ?? '-'} · Anio:{' '}
+                      {getAnioParticipacion(competencia)}
+                    </span>
+                  </span>
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {competenciasDisponibles.length > 0 ? (
+        <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <h3 className="text-sm font-semibold text-slate-900">
+            Datos de inscripción
+          </h3>
           <FormInput
-            label="Número de camiseta *"
+            label="Numero camiseta"
             type="number"
             min="1"
-            required
-            value={form.numero_camiseta}
-            onChange={(event) =>
-              onChange({ ...form, numero_camiseta: event.target.value })
-            }
+            value={numeroCamiseta}
+            onChange={(event) => onNumeroCamisetaChange(event.target.value)}
           />
-          <FormInput
-            label="Año de participación"
-            type="number"
-            readOnly
-            value={form.anio_participacion}
-          />
-          <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+          <label className="block text-sm font-medium text-slate-700">
             Observaciones
             <textarea
-              value={form.observaciones}
-              onChange={(event) =>
-                onChange({ ...form, observaciones: event.target.value })
-              }
-              className="mt-1 min-h-24 w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-950 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              value={observaciones}
+              onChange={(event) => onObservacionesChange(event.target.value)}
+              className="mt-1 min-h-24 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-950 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
             />
           </label>
         </div>
-      )}
+      ) : null}
 
       <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
         <button
@@ -772,7 +830,13 @@ function InscripcionModalContent({
           disabled={!canSubmit}
           onClick={onSubmit}
         >
-          {isSubmitting ? 'Inscribiendo...' : 'Inscribir'}
+          {isSubmitting
+            ? 'Inscribiendo...'
+            : `Inscribir seleccionadas${
+                selectedCompetencias.length
+                  ? ` (${selectedCompetencias.length})`
+                  : ''
+              }`}
         </Button>
       </div>
     </div>

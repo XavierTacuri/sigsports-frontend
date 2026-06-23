@@ -12,6 +12,7 @@ import { ErrorMessage } from '../../components/ui/ErrorMessage';
 import { FormInput } from '../../components/ui/FormInput';
 import { FormSelect } from '../../components/ui/FormSelect';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
+import { Modal } from '../../components/ui/Modal';
 import { Pagination } from '../../components/ui/Pagination';
 import { useAuth } from '../../hooks/useAuth';
 import { useDelegadoClubes } from '../../hooks/useDelegadoClubes';
@@ -68,6 +69,37 @@ type InscripcionWithDetails = InscripcionCompetencia & {
   club_nombre?: string;
 };
 
+const inferDeporteFromCompetencia = (nombre: string) => {
+  const normalized = nombre.toUpperCase();
+
+  if (normalized.includes('FUTBOL')) return 'Futbol';
+  if (normalized.includes('INDOR')) return 'Indor';
+  if (normalized.includes('BASQUET')) return 'Basquet';
+  if (normalized.includes('VOLEY')) return 'Voley';
+  if (normalized.includes('AJEDREZ')) return 'Ajedrez';
+  if (normalized.includes('CICLISMO')) return 'Ciclismo';
+  if (normalized.includes('ATLETISMO')) return 'Atletismo';
+  if (normalized.includes('TENIS')) return 'Tenis de Mesa';
+
+  return '-';
+};
+
+const inferCategoriaFromCompetencia = (nombre: string) => {
+  const normalized = nombre.toUpperCase();
+
+  if (normalized.includes('LIBRE')) return 'Libre M';
+  if (normalized.includes('SUB')) {
+    const match = normalized.match(/SUB\s*(\d+)/);
+    return match ? `Sub ${match[1]}` : 'Sub';
+  }
+  if (normalized.includes('POST')) {
+    const match = normalized.match(/POST\s*(\d+)\s*-\s*(\d+)/);
+    return match ? `Post ${match[1]}-${match[2]}` : 'Post';
+  }
+
+  return '-';
+};
+
 type CompetenciaWithDetails = Competencia & {
   nombre?: string;
   deporte?: NamedValue;
@@ -76,6 +108,17 @@ type CompetenciaWithDetails = Competencia & {
   nombre_categoria?: string;
   deporte_nombre?: string;
   categoria_nombre?: string;
+};
+
+type InscripcionesJugadorGrupo = {
+  id_jugador: number;
+  id_club: number;
+  nombre_jugador: string;
+  cedula: string;
+  nombre_club: string;
+  genero?: string | null;
+  fecha_nacimiento?: string | null;
+  inscripciones: InscripcionCompetencia[];
 };
 
 const uniqueOptions = (values: Array<string | undefined>) =>
@@ -116,6 +159,8 @@ export function InscripcionesPage() {
   const [pageSize, setPageSize] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selectedGrupo, setSelectedGrupo] =
+    useState<InscripcionesJugadorGrupo | null>(null);
   const {
     clubesAsociados,
     selectedClubName,
@@ -270,6 +315,7 @@ export function InscripcionesPage() {
       details.nombre_competencia ??
       details.competencia_nombre ??
       details.competencia?.nombre ??
+      (details as { nombre?: string }).nombre ??
       competencia?.nombre_competencia ??
       competencia?.nombre ??
       '-'
@@ -293,6 +339,7 @@ export function InscripcionesPage() {
     ) as CompetenciaWithDetails | undefined;
     const deporte = details.deporte;
     const competenciaDeporte = details.competencia?.deporte;
+    const competenciaNombre = getCompetenciaName(item);
 
     if (typeof deporte === 'string') {
       return deporte;
@@ -304,16 +351,20 @@ export function InscripcionesPage() {
 
     return (
       competenciaDeporte?.nombre_deporte ??
+      competenciaDeporte?.nombre ??
       deporte?.nombre_deporte ??
+      deporte?.nombre ??
       details.nombre_deporte ??
       details.deporte_nombre ??
       details.competencia?.nombre_deporte ??
       competencia?.deporte?.nombre_deporte ??
+      competencia?.deporte?.nombre ??
       competencia?.nombre_deporte ??
       competencia?.deporte_nombre ??
-      deporteNames.get(competencia?.id_deporte)
+      deporteNames.get(competencia?.id_deporte) ??
+      inferDeporteFromCompetencia(competenciaNombre)
     );
-  }, [competenciaById, deporteNames]);
+  }, [competenciaById, deporteNames, getCompetenciaName]);
   const getCategoriaName = useCallback((item: InscripcionCompetencia) => {
     const details = item as InscripcionWithDetails;
     const competencia = competenciaById.get(
@@ -321,6 +372,7 @@ export function InscripcionesPage() {
     ) as CompetenciaWithDetails | undefined;
     const categoria = details.categoria;
     const competenciaCategoria = details.competencia?.categoria;
+    const competenciaNombre = getCompetenciaName(item);
 
     if (typeof categoria === 'string') {
       return categoria;
@@ -332,16 +384,20 @@ export function InscripcionesPage() {
 
     return (
       competenciaCategoria?.nombre_categoria ??
+      competenciaCategoria?.nombre ??
       categoria?.nombre_categoria ??
+      categoria?.nombre ??
       details.nombre_categoria ??
       details.categoria_nombre ??
       details.competencia?.nombre_categoria ??
       competencia?.categoria?.nombre_categoria ??
+      competencia?.categoria?.nombre ??
       competencia?.nombre_categoria ??
       competencia?.categoria_nombre ??
-      categoriaNames.get(competencia?.id_categoria)
+      categoriaNames.get(competencia?.id_categoria) ??
+      inferCategoriaFromCompetencia(competenciaNombre)
     );
-  }, [categoriaNames, competenciaById]);
+  }, [categoriaNames, competenciaById, getCompetenciaName]);
   const getJugadorName = useCallback((item: InscripcionCompetencia) => {
     const details = item as InscripcionWithDetails;
     const jugador = jugadoresById.get(item.id_jugador);
@@ -470,92 +526,104 @@ export function InscripcionesPage() {
     isDelegado,
   ]);
 
+  const groupedInscripciones = useMemo(() => {
+    const groups = new Map<string, InscripcionesJugadorGrupo>();
+
+    filteredInscripciones.forEach((item) => {
+      const idJugador = Number(item.id_jugador);
+      const idClub = Number(item.id_club);
+
+      if (!idJugador) {
+        return;
+      }
+
+      const jugador = jugadoresById.get(idJugador);
+      const groupKey = `${idJugador}-${idClub || 'sin-club'}`;
+      const current = groups.get(groupKey);
+
+      if (current) {
+        current.inscripciones.push(item);
+        return;
+      }
+
+      groups.set(groupKey, {
+        id_jugador: idJugador,
+        id_club: idClub,
+        nombre_jugador: getJugadorName(item),
+        cedula: getJugadorCedula(item),
+        nombre_club: getClubName(item),
+        genero: jugador?.genero,
+        fecha_nacimiento: jugador?.fecha_nacimiento,
+        inscripciones: [item],
+      });
+    });
+
+    return [...groups.values()];
+  }, [
+    filteredInscripciones,
+    getClubName,
+    getJugadorCedula,
+    getJugadorName,
+    jugadoresById,
+  ]);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [filters, pageSize]);
 
-  const totalPages = Math.ceil(filteredInscripciones.length / pageSize);
-  const paginatedInscripciones = paginate(
-    filteredInscripciones,
+  const totalPages = Math.ceil(groupedInscripciones.length / pageSize);
+  const paginatedGrupos = paginate(
+    groupedInscripciones,
     currentPage,
     pageSize,
   );
 
   const columns = useMemo(() => {
-    const delegadoColumns = [
+    const baseColumns = [
       {
-        key: 'competencia',
-        header: 'Competencia',
-        render: (item: InscripcionCompetencia) => getCompetenciaName(item),
-      },
-      {
-        key: 'jugador',
+        key: 'nombre_jugador',
         header: 'Jugador',
-        render: (item: InscripcionCompetencia) => getJugadorName(item),
+        render: (item: InscripcionesJugadorGrupo) => item.nombre_jugador,
       },
       {
         key: 'cedula',
         header: 'Cedula',
-        render: (item: InscripcionCompetencia) => getJugadorCedula(item),
-      },
-      {
-        key: 'camiseta',
-        header: 'Numero de camiseta',
-        render: (item: InscripcionCompetencia) => item.numero_camiseta ?? '-',
-      },
-      {
-        key: 'anio',
-        header: 'Anio',
-        render: (item: InscripcionCompetencia) =>
-          item.anio_participacion ?? '-',
-      },
-      {
-        key: 'estado',
-        header: 'Estado',
-        render: (item: InscripcionCompetencia) => (
-          <InscripcionStatusBadge estado={item.estado_inscripcion} />
-        ),
+        render: (item: InscripcionesJugadorGrupo) => item.cedula,
       },
     ];
 
-    if (isDelegado) {
-      return delegadoColumns;
-    }
-
     return [
-      ...delegadoColumns.slice(0, 1),
-      {
-        key: 'deporte',
-        header: 'Deporte',
-        render: (item: InscripcionCompetencia) => getDeporteName(item) ?? '-',
-      },
-      {
-        key: 'categoria',
-        header: 'Categoria',
-        render: (item: InscripcionCompetencia) =>
-          getCategoriaName(item) ?? '-',
-      },
+      ...baseColumns,
       ...(showClubColumn
         ? [
             {
               key: 'club',
               header: 'Club',
-              render: (item: InscripcionCompetencia) => getClubName(item),
+              render: (item: InscripcionesJugadorGrupo) => item.nombre_club,
             },
           ]
         : []),
-      ...delegadoColumns.slice(1),
+      {
+        key: 'total',
+        header: 'Inscripciones',
+        render: (item: InscripcionesJugadorGrupo) => item.inscripciones.length,
+      },
+      {
+        key: 'estado',
+        header: 'Estado',
+        render: (item: InscripcionesJugadorGrupo) => {
+          const hasActiva = item.inscripciones.some(
+            (inscripcion) => inscripcion.estado_inscripcion === 'ACTIVA',
+          );
+          const estado = hasActiva
+            ? 'ACTIVA'
+            : item.inscripciones[0]?.estado_inscripcion ?? 'INACTIVA';
+
+          return <InscripcionStatusBadge estado={estado} />;
+        },
+      },
     ];
-  }, [
-    getClubName,
-    getCategoriaName,
-    getCompetenciaName,
-    getDeporteName,
-    getJugadorCedula,
-    getJugadorName,
-    isDelegado,
-    showClubColumn,
-  ]);
+  }, [showClubColumn]);
 
   if (isAuthLoading || !user) {
     return <p>Cargando usuario...</p>;
@@ -699,34 +767,128 @@ export function InscripcionesPage() {
 
       <DataTable
         columns={columns}
-        data={paginatedInscripciones}
-        getKey={(item) =>
-          item.id_inscripcion_competencia ??
-          `${item.id_competencia}-${item.id_club}-${item.id_jugador}`
-        }
+        data={paginatedGrupos}
+        getKey={(item) => `${item.id_jugador}-${item.id_club}`}
         emptyMessage={
           isDelegado && inscripciones.length === 0
             ? 'No hay inscripciones registradas para tu club.'
             : 'No hay inscripciones que coincidan con los filtros.'
         }
         renderActions={(item) => (
-          <Link
-            to={`/inscripciones/${item.id_inscripcion_competencia}`}
-            state={{ inscripcion: item }}
+          <button
+            type="button"
+            onClick={() => setSelectedGrupo(item)}
             className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
           >
             Ver detalle
-          </Link>
+          </button>
         )}
       />
       <Pagination
         currentPage={currentPage}
         totalPages={totalPages}
         pageSize={pageSize}
-        totalItems={filteredInscripciones.length}
+        totalItems={groupedInscripciones.length}
         onPageChange={setCurrentPage}
         onPageSizeChange={setPageSize}
       />
+      {selectedGrupo ? (
+        <Modal
+          title={`Inscripciones de ${selectedGrupo.nombre_jugador}`}
+          onClose={() => setSelectedGrupo(null)}
+          maxWidth="5xl"
+        >
+          <div className="space-y-5">
+            <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <span className="block text-xs font-semibold uppercase text-slate-500">
+                  Jugador
+                </span>
+                <span className="font-semibold text-slate-950">
+                  {selectedGrupo.nombre_jugador}
+                </span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold uppercase text-slate-500">
+                  Cedula
+                </span>
+                <span>{selectedGrupo.cedula}</span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold uppercase text-slate-500">
+                  Club
+                </span>
+                <span>{selectedGrupo.nombre_club}</span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold uppercase text-slate-500">
+                  Genero
+                </span>
+                <span>{selectedGrupo.genero ?? '-'}</span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold uppercase text-slate-500">
+                  Fecha nacimiento
+                </span>
+                <span>{selectedGrupo.fecha_nacimiento ?? '-'}</span>
+              </div>
+            </div>
+
+            <DataTable
+              columns={[
+                {
+                  key: 'competencia',
+                  header: 'Competencia',
+                  render: (item: InscripcionCompetencia) =>
+                    getCompetenciaName(item),
+                },
+                {
+                  key: 'deporte',
+                  header: 'Deporte',
+                  render: (item: InscripcionCompetencia) =>
+                    getDeporteName(item) ?? '-',
+                },
+                {
+                  key: 'categoria',
+                  header: 'Categoria',
+                  render: (item: InscripcionCompetencia) =>
+                    getCategoriaName(item) ?? '-',
+                },
+                {
+                  key: 'camiseta',
+                  header: 'Numero camiseta',
+                  render: (item: InscripcionCompetencia) =>
+                    item.numero_camiseta ?? '-',
+                },
+                {
+                  key: 'anio',
+                  header: 'Anio',
+                  render: (item: InscripcionCompetencia) =>
+                    item.anio_participacion ?? '-',
+                },
+                {
+                  key: 'estado',
+                  header: 'Estado',
+                  render: (item: InscripcionCompetencia) => (
+                    <InscripcionStatusBadge estado={item.estado_inscripcion} />
+                  ),
+                },
+                {
+                  key: 'observaciones',
+                  header: 'Observaciones',
+                  render: (item: InscripcionCompetencia) =>
+                    item.observaciones || '-',
+                },
+              ]}
+              data={selectedGrupo.inscripciones}
+              getKey={(item) =>
+                item.id_inscripcion_competencia ??
+                `${item.id_competencia}-${item.id_club}-${item.id_jugador}`
+              }
+            />
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }
